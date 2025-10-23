@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Dynamic Webpage</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body { font-family: system-ui,Segoe UI,Roboto,Helvetica,Arial; max-width:900px; margin:2rem auto; padding:0 1rem; color:#222; }
+        header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+        form { display:flex; gap:.5rem; margin-bottom:1rem; }
+        input[type="text"]{ flex:1; padding:.5rem; }
+        button { padding:.5rem .7rem; }
+        ul { list-style:none; padding:0; margin:0; }
+        li { display:flex; justify-content:space-between; gap:1rem; padding:.5rem; border:1px solid #eee; border-radius:6px; margin-bottom:.5rem; align-items:center; }
+        .muted { color:#666; font-size:.9rem; }
+        .error { color:#b00; margin-top:.5rem; }
+        
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Items</h1>
+        <div class="muted" id="status">idle</div>
+    </header>
+
+    <form id="addForm" autocomplete="off">
+        <input id="text" type="text" placeholder="Add new item..." required />
+        <button type="submit">Add</button>
+    </form>
+
+    <div id="message" class="error" role="status" aria-live="polite"></div>
+
+    <ul id="list" aria-live="polite"></ul>
+
+    <template id="itemTpl">
+        <li>
+            <span class="label"></span>
+            <div>
+                <button class="delete">Delete</button>
+            </div>
+        </li>
+    </template>
+
+    <script>
+        // Assumes a Flask backend exposing REST endpoints:
+        // GET  /api/items        -> [{id:1, text:"..."}, ...]
+        // POST /api/items        -> accepts JSON {text:"..."} returns created item
+        // DELETE /api/items/<id> -> deletes item, returns 204 or deleted item
+        const listEl = document.getElementById('list');
+        const tpl = document.getElementById('itemTpl');
+        const statusEl = document.getElementById('status');
+        const msgEl = document.getElementById('message');
+
+        const api = {
+            get: () => fetch('/api/items').then(r => r.ok ? r.json() : Promise.reject(r)),
+            create: (text) => fetch('/api/items', {
+                method:'POST',
+                headers:{ 'Content-Type':'application/json' },
+                body: JSON.stringify({ text })
+            }).then(r => r.ok ? r.json() : Promise.reject(r)),
+            remove: (id) => fetch(`/api/items/${encodeURIComponent(id)}`, { method:'DELETE' })
+                .then(r => r.ok ? r.json().catch(()=>null) : Promise.reject(r))
+        };
+
+        function setStatus(s){ statusEl.textContent = s; }
+
+        async function loadItems(){
+            setStatus('loading...');
+            msgEl.textContent = '';
+            try {
+                const items = await api.get();
+                renderItems(items || []);
+                setStatus('loaded');
+            } catch (e) {
+                msgEl.textContent = 'Failed to load items.';
+                setStatus('error');
+                console.error(e);
+            }
+        }
+
+        function renderItems(items){
+            listEl.innerHTML = '';
+            if (!items.length) {
+                const li = document.createElement('li');
+                li.className = 'muted';
+                li.textContent = 'No items yet.';
+                listEl.appendChild(li);
+                return;
+            }
+            for (const it of items) {
+                const node = tpl.content.cloneNode(true);
+                node.querySelector('.label').textContent = it.text;
+                const deleteBtn = node.querySelector('.delete');
+                deleteBtn.addEventListener('click', () => onDelete(it.id, node));
+                listEl.appendChild(node);
+            }
+        }
+
+        async function onDelete(id, nodeFragment){
+            msgEl.textContent = '';
+            setStatus('deleting...');
+            // optimistic UI: remove visually first
+            const li = nodeFragment.querySelector('li') || nodeFragment;
+            if (li && li.remove) li.remove();
+            try {
+                await api.remove(id);
+                setStatus('updated');
+            } catch (e) {
+                msgEl.textContent = 'Failed to delete item.';
+                console.error(e);
+                // reload to restore consistency
+                loadItems();
+            }
+        }
+
+        document.getElementById('addForm').addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const input = document.getElementById('text');
+            const text = input.value.trim();
+            if (!text) return;
+            msgEl.textContent = '';
+            setStatus('saving...');
+            try {
+                const created = await api.create(text);
+                // append new item to UI
+                const node = tpl.content.cloneNode(true);
+                node.querySelector('.label').textContent = created.text;
+                const deleteBtn = node.querySelector('.delete');
+                deleteBtn.addEventListener('click', () => onDelete(created.id, node));
+                listEl.appendChild(node);
+                input.value = '';
+                input.focus();
+                setStatus('saved');
+            } catch (e) {
+                msgEl.textContent = 'Failed to add item.';
+                console.error(e);
+                setStatus('error');
+            }
+        });
+
+        // initial load
+        loadItems();
+        // optional: refresh periodically
+        // setInterval(loadItems, 30000);
+    </script>
+</body>
+</html>
